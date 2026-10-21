@@ -1,0 +1,20 @@
+# Netlify build configuration.
+#
+# Netlify installs the Next.js runtime automatically for Next.js sites; the
+# explicit block below pins it so the build does not depend on auto-detection.
+#
+# Environment variables are NOT stored here — set them in the Netlify UI under
+# Site configuration -> Environment variables. The required set is documented in
+# .env.example.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Next 16 and Prisma 6 both require Node >= 20, and 22 is the Lambda runtime
+  # that Prisma's `rhel-openssl-3.0.x` engine binary is built against.
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

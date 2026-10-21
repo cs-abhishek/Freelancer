@@ -13,11 +13,19 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Netlify Functions run on Amazon Linux 2023 (OpenSSL 3.0), so the query
+  // engine has to be built for `rhel-openssl-3.0.x` as well as the local
+  // machine, otherwise the deployed function fails to load the engine.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Neon hands out pooled connections through pgbouncer, which cannot run DDL.
+  // The Prisma CLI reads `directUrl` instead, so schema changes go straight to
+  // the database while the app keeps its pooled connection.
+  directUrl = env("DIRECT_URL")
 }
 
 // ===========================================================================
