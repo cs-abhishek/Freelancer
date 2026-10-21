@@ -1,0 +1,634 @@
+// ---------------------------------------------------------------------------
+// Freelancer marketplace - Prisma schema
+//
+// MONEY RULE
+// Every monetary column is an integer count of PAISE (1 INR = 100 paise).
+// Never use Float/Decimal for money. Helpers live in src/lib/money.ts.
+//
+// NOTE ON RANGE
+// Prisma maps `Int` to a signed 32-bit Postgres integer, so a single monetary
+// column tops out at 2_147_483_647 paise (~Rs 2.14 crore). `assertPaise()` in
+// src/lib/money.ts rejects out-of-range values before they reach the database.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+// Enums
+// ===========================================================================
+
+/// RBAC roles. CLIENT hires, FREELANCER delivers, ADMIN moderates.
+enum UserRole {
+  CLIENT
+  FREELANCER
+  ADMIN
+}
+
+/// Dual freelancer tiers required by the product spec.
+enum FreelancerTier {
+  /// Verified via .edu.in / .ac.in email or college ID + GitHub/portfolio.
+  CAMPUS_TALENT
+  /// Verified via LinkedIn/work experience + Aadhaar/PAN KYC.
+  WORKING_PROFESSIONAL
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum KycDocumentType {
+  COLLEGE_ID
+  STUDENT_EMAIL
+  AADHAAR
+  PAN
+  LINKEDIN
+  GITHUB
+  PORTFOLIO
+}
+
+enum CompanyType {
+  STARTUP
+  SMB
+  CREATOR
+  INDIVIDUAL
+}
+
+/// Hybrid work model: bidding (Upwork-style) or instant-book (Fiverr-style).
+enum EngagementModel {
+  BIDDING
+  INSTANT_BOOK
+}
+
+/// How the budget is priced: one-off delivery or an hourly engagement.
+enum BudgetType {
+  FIXED
+  HOURLY
+}
+
+/// Which verification tier the client will entertain on this brief.
+enum PreferredTier {
+  ANY
+  STUDENT_ONLY
+  PRO_ONLY
+}
+
+enum ProjectStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum BidStatus {
+  PENDING
+  SHORTLISTED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum MilestoneStatus {
+  PENDING
+  FUNDED
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  RELEASED
+  DISPUTED
+  CANCELLED
+}
+
+enum GigOrderStatus {
+  PENDING
+  ACTIVE
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum EscrowStatus {
+  CREATED
+  FUNDED
+  PARTIALLY_RELEASED
+  RELEASED
+  REFUNDED
+  DISPUTED
+  FAILED
+}
+
+/// Append-only trail of every movement of money inside an escrow account.
+enum LedgerEntryType {
+  ESCROW_FUNDING
+  MILESTONE_RELEASE
+  PLATFORM_COMMISSION
+  TDS_WITHHELD
+  GST_COLLECTED
+  REFUND
+  PAYOUT
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REVERSED
+}
+
+enum InvoiceType {
+  GST_TAX_INVOICE
+  CREDIT_NOTE
+}
+
+enum InvoiceParty {
+  CLIENT
+  FREELANCER
+}
+
+// ===========================================================================
+// Auth.js (NextAuth v5) adapter models
+// ===========================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  phone         String?   @unique
+  phoneVerified DateTime?
+
+  role          UserRole  @default(CLIENT)
+  isActive      Boolean   @default(true)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+  freelancerProfile FreelancerProfile?
+  clientProfile     ClientProfile?
+  kycDocuments      KycDocument[]
+
+  clientProjects    Project[] @relation("ProjectClient")
+  assignedProjects  Project[] @relation("ProjectFreelancer")
+  bids              Bid[]
+  gigs              Gig[]
+  gigOrders         GigOrder[] @relation("GigOrderClient")
+  payouts           Payout[]
+  invoices          Invoice[]  @relation("InvoiceClient")
+  reviewsWritten    Review[]   @relation("ReviewAuthor")
+  reviewsReceived   Review[]   @relation("ReviewSubject")
+
+  @@index([role])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/// Phone OTP sign-in. Only a hash of the code is persisted.
+model PhoneOtp {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  expires    DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, expires])
+}
+
+// ===========================================================================
+// Profiles
+// ===========================================================================
+
+model FreelancerProfile {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tier               FreelancerTier     @default(CAMPUS_TALENT)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  verifiedAt         DateTime?
+
+  headline           String?
+  bio                String?
+  city               String?
+  country            String             @default("IN")
+  skills             String[]           @default([])
+  hourlyRatePaise    Int?
+  availabilityHours  Int?
+
+  portfolioUrl       String?
+  githubUrl          String?
+  linkedinUrl        String?
+  resumeUrl          String?
+
+  // --- Campus talent verification ---
+  collegeName        String?
+  graduationYear     Int?
+  campusEmail        String?
+  /// True once the .edu.in / .ac.in address has been confirmed.
+  isCollegeEmailVerified Boolean        @default(false)
+
+  // --- Working professional verification ---
+  yearsExperience    Int?
+  currentEmployer    String?
+
+  // --- Payout rail (UPI is the primary rail for Indian freelancers) ---
+  upiId              String?
+  /// True once a PAN has been reviewed — required for TDS reporting.
+  panVerified        Boolean            @default(false)
+
+  // Aggregated reputation kept as integers so averages never need floats.
+  ratingSum          Int                @default(0)
+  ratingCount        Int                @default(0)
+  completedProjects  Int                @default(0)
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([verificationStatus])
+  @@index([tier])
+}
+
+model ClientProfile {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyName        String?
+  companyType        CompanyType        @default(INDIVIDUAL)
+  gstin              String?
+
+  billingName        String?
+  billingAddress     String?
+  billingCity        String?
+  billingState       String?
+  billingPincode     String?
+  /// GST place of supply, drives CGST+SGST vs IGST on invoices.
+  placeOfSupply      String?
+
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  /// True once a client has funded escrow at least once.
+  isPaymentVerified  Boolean            @default(false)
+  totalSpentPaise    Int                @default(0)
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model KycDocument {
+  id             String             @id @default(cuid())
+  userId         String
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type           KycDocumentType
+  status         VerificationStatus @default(PENDING)
+  /// PAN / Aadhaar reference. Treat as sensitive PII in production.
+  documentNumber String?
+  fileUrl        String?
+
+  reviewedById   String?
+  reviewNote     String?
+  reviewedAt     DateTime?
+
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([userId, status])
+}
+
+// ===========================================================================
+// Marketplace core
+// ===========================================================================
+
+model Project {
+  id          String @id @default(cuid())
+  clientId    String
+  client      User   @relation("ProjectClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  title       String
+  /// Human-readable URL segment, e.g. build-a-razorpay-checkout-flow.
+  slug        String? @unique
+  description String
+  category    String
+  skills      String[] @default([])
+
+  engagementModel EngagementModel @default(BIDDING)
+  budgetType      BudgetType      @default(FIXED)
+  preferredTier   PreferredTier   @default(ANY)
+  status          ProjectStatus   @default(DRAFT)
+
+  currency        String @default("INR")
+  budgetMinPaise  Int?
+  budgetMaxPaise  Int?
+
+  deadline        DateTime?
+  bidCount        Int       @default(0)
+
+  assignedFreelancerId String?
+  assignedFreelancer   User?   @relation("ProjectFreelancer", fields: [assignedFreelancerId], references: [id], onDelete: SetNull)
+
+  /// Set when the project was created from an instant-book gig order.
+  gigOrderId String?   @unique
+  gigOrder   GigOrder? @relation(fields: [gigOrderId], references: [id], onDelete: SetNull)
+
+  escrow     EscrowAccount?
+  milestones Milestone[]
+  bids       Bid[]
+  reviews    Review[]
+  invoices   Invoice[]
+
+  publishedAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([clientId])
+  @@index([category])
+}
+
+model Bid {
+  id           String  @id @default(cuid())
+  projectId    String
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  freelancerId String
+  freelancer   User    @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+
+  amountPaise  Int
+  deliveryDays Int
+  coverLetter  String
+  status       BidStatus @default(PENDING)
+
+  /// Optional milestone plan proposed alongside the bid.
+  milestonePlan Json?
+
+  withdrawnAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  /// A freelancer may bid on a project only once.
+  @@unique([projectId, freelancerId])
+  @@index([projectId, status])
+  @@index([freelancerId, status])
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  escrowId    String?
+  escrow      EscrowAccount?  @relation(fields: [escrowId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+  amountPaise Int
+  /// Display / lifecycle order within the project (1-based).
+  position    Int
+  status      MilestoneStatus @default(PENDING)
+
+  dueAt       DateTime?
+  fundedAt    DateTime?
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  releasedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, position])
+  @@index([projectId, status])
+}
+
+/// Fixed-price packaged micro-gig (Fiverr-style instant book).
+model Gig {
+  id           String @id @default(cuid())
+  freelancerId String
+  freelancer   User   @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+
+  title        String
+  description  String
+  category     String
+  skills       String[] @default([])
+
+  pricePaise        Int
+  deliveryDays      Int
+  revisionsIncluded Int     @default(1)
+
+  coverImageUrl String?
+  isActive      Boolean @default(true)
+
+  orders   GigOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, isActive])
+  @@index([freelancerId])
+}
+
+model GigOrder {
+  id       String @id @default(cuid())
+  gigId    String
+  gig      Gig    @relation(fields: [gigId], references: [id], onDelete: Restrict)
+  clientId String
+  client   User   @relation("GigOrderClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  status       GigOrderStatus @default(PENDING)
+  amountPaise  Int
+  requirements String?
+
+  /// The order is fulfilled as a normal Project, so it reuses escrow + milestones.
+  project Project?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, status])
+  @@index([gigId])
+}
+
+// ===========================================================================
+// Money: escrow, ledger, payouts, invoices
+// ===========================================================================
+
+model EscrowAccount {
+  id            String       @id @default(cuid())
+  projectId     String       @unique
+  project       Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// Payment rail: "mock" while stubbed, "razorpay" in production.
+  provider      String       @default("mock")
+  providerRef   String?
+  status        EscrowStatus @default(CREATED)
+  currency      String       @default("INR")
+
+  fundedPaise       Int @default(0)
+  releasedPaise     Int @default(0)
+  refundedPaise     Int @default(0)
+  commissionPaise   Int @default(0)
+  tdsWithheldPaise  Int @default(0)
+  gstCollectedPaise Int @default(0)
+  balancePaise      Int @default(0)
+
+  fundedAt   DateTime?
+  releasedAt DateTime?
+
+  ledgerEntries LedgerEntry[]
+  milestones    Milestone[]
+  payouts       Payout[]
+  invoices      Invoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LedgerEntry {
+  id       String        @id @default(cuid())
+  escrowId String
+  escrow   EscrowAccount @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+
+  type LedgerEntryType
+  /// Signed: positive credits the escrow, negative debits it.
+  amountPaise       Int
+  balanceAfterPaise Int
+
+  reference String?
+  note      String?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([escrowId, createdAt])
+}
+
+model Payout {
+  id       String         @id @default(cuid())
+  userId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  escrowId String?
+  escrow   EscrowAccount? @relation(fields: [escrowId], references: [id], onDelete: SetNull)
+
+  grossPaise      Int
+  commissionPaise Int @default(0)
+  tdsPaise        Int @default(0)
+  netPaise        Int
+  /// "194J" (professional services) or "194C" (contractors).
+  tdsSection      String?
+
+  status        PayoutStatus @default(PENDING)
+  provider      String       @default("mock")
+  providerRef   String?
+  upiId         String?
+  /// Bank UTR / UPI reference returned by the rail.
+  utr           String?
+  failureReason String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  paidAt    DateTime?
+
+  @@index([userId, status])
+}
+
+model Invoice {
+  id     String       @id @default(cuid())
+  number String       @unique
+  type   InvoiceType  @default(GST_TAX_INVOICE)
+  party  InvoiceParty
+
+  projectId String?
+  project   Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  escrowId  String?
+  escrow    EscrowAccount? @relation(fields: [escrowId], references: [id], onDelete: SetNull)
+  clientId  String
+  client    User           @relation("InvoiceClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  subtotalPaise Int
+  cgstPaise     Int @default(0)
+  sgstPaise     Int @default(0)
+  igstPaise     Int @default(0)
+  totalPaise    Int
+
+  gstin         String?
+  placeOfSupply String?
+  hsnSac        String?
+
+  issuedAt DateTime @default(now())
+  pdfUrl   String?
+
+  @@index([clientId, issuedAt])
+}
+
+model Review {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User    @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   User    @relation("ReviewSubject", fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// 1-5 stars, validated in the application layer.
+  rating  Int
+  comment String?
+
+  createdAt DateTime @default(now())
+
+  /// One review per party per project.
+  @@unique([projectId, authorId])
+  @@index([subjectId])
+}
