@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
-import { signInWithProviderAction } from "@/actions/auth";
+import { signInWithDemoAction, signInWithProviderAction } from "@/actions/auth";
 import { OtpSignInForm } from "@/components/forms/otp-sign-in-form";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/lib/constants";
-import { hasGitHubOAuth, hasGoogleOAuth } from "@/lib/env";
+import { env, hasDemoLogin, hasGitHubOAuth, hasGoogleOAuth } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -25,6 +25,25 @@ export default function LoginPage() {
       </div>
 
       <OtpSignInForm />
+
+      {hasDemoLogin ? (
+        <div className="flex flex-col gap-3 border-t border-border/70 pt-5">
+          <div>
+            <h2 className="text-sm font-semibold">Demo access</h2>
+            <p className="text-xs text-muted-foreground">Use this account to explore the app.</p>
+          </div>
+          <form action={signInWithDemoAction} className="flex flex-col gap-2">
+            <input type="hidden" name="email" value={env.DEMO_LOGIN_EMAIL} />
+            <input type="hidden" name="password" value={env.DEMO_LOGIN_PASSWORD} />
+            <Button type="submit" variant="outline" className="h-11 w-full rounded-xl">
+              Continue with demo account
+            </Button>
+          </form>
+          <p className="text-[0.7rem] text-muted-foreground">
+            {env.DEMO_LOGIN_EMAIL} / {env.DEMO_LOGIN_PASSWORD}
+          </p>
+        </div>
+      ) : null}
 
       {hasGoogleOAuth || hasGitHubOAuth ? (
         <div className="flex flex-col gap-3">

@@ -24,6 +24,14 @@ export function findUserByEmail(email: string): Promise<User | null> {
   return prisma.user.findUnique({ where: { email } });
 }
 
+export function findOrCreateDemoUser(email: string): Promise<User> {
+  return prisma.user.upsert({
+    where: { email },
+    create: { email, name: "Demo User", role: "CLIENT" },
+    update: {},
+  });
+}
+
 export function findUserByPhone(rawPhone: string): Promise<User | null> {
   return prisma.user.findUnique({ where: { phone: normalizeIndianPhone(rawPhone) } });
 }

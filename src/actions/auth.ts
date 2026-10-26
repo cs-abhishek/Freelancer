@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { type ActionState, actionError, actionSuccess, toFieldErrors } from "@/lib/action-state";
 import { signIn, signOut } from "@/lib/auth";
 import { ROUTES } from "@/lib/constants";
-import { env, hasGitHubOAuth, hasGoogleOAuth } from "@/lib/env";
+import { env, hasDemoLogin, hasGitHubOAuth, hasGoogleOAuth } from "@/lib/env";
 import { rupeesToPaise } from "@/lib/money";
 import { requireRole, requireUser } from "@/lib/dal";
 import {
@@ -86,6 +86,25 @@ export async function signInWithOtpAction(
   }
 
   return actionSuccess();
+}
+
+export async function signInWithDemoAction(formData: FormData): Promise<void> {
+  if (!hasDemoLogin) {
+    redirect(ROUTES.login);
+  }
+
+  try {
+    await signIn("demo-login", {
+      email: formData.get("email"),
+      password: formData.get("password"),
+      redirectTo: ROUTES.dashboard,
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      redirect(`${ROUTES.login}?error=demo`);
+    }
+    throw error;
+  }
 }
 
 /**

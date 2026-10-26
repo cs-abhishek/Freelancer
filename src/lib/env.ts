@@ -23,6 +23,9 @@ const envSchema = z.object({
   AUTH_GITHUB_ID: z.string().optional(),
   AUTH_GITHUB_SECRET: z.string().optional(),
 
+  DEMO_LOGIN_EMAIL: z.string().email().default("demo@freelancer.local"),
+  DEMO_LOGIN_PASSWORD: z.string().min(8).default("demo1234"),
+
   EMAIL_SERVER: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
 
@@ -58,3 +61,7 @@ export const hasGoogleOAuth = Boolean(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECR
 export const hasGitHubOAuth = Boolean(env.AUTH_GITHUB_ID && env.AUTH_GITHUB_SECRET);
 /** True when an SMTP server is configured for magic-link emails. */
 export const hasEmailProvider = Boolean(env.EMAIL_SERVER && env.EMAIL_FROM);
+/** Demo credentials are available locally, or when explicitly configured outside development. */
+export const hasDemoLogin =
+  env.NODE_ENV !== "production" ||
+  Boolean(process.env.DEMO_LOGIN_EMAIL && process.env.DEMO_LOGIN_PASSWORD);
